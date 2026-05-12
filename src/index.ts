@@ -305,23 +305,29 @@ server.tool(
       })
     );
 
-    const result = {
-      id: apiRecord?.nr_pkbwl ?? args.report_id,
-      url,
-      date: apiRecord?.data_zdarzenia,
-      aircraft_type: apiRecord?.typ_statku_powietrznego,
-      aircraft_category: apiRecord?.kategoria_statku_powietrznego,
-      registration: apiRecord?.znaki_rozpoznawcze,
-      classification: apiRecord?.klasyfikacja_zdarzenia,
-      location: apiRecord?.miejsce_zdarzenia,
-      investigation_closed: apiRecord?.data_zakonczenia_badania,
-      metadata,
-      summary,
-      documents: pdfResults,
-    };
+    const r = apiRecord;
+    const lines: string[] = [
+      `REPORT: ${r?.nr_pkbwl ?? args.report_id}`,
+      `URL: ${url}`,
+      `Date: ${r?.data_zdarzenia ?? "-"}`,
+      `Classification: ${r?.klasyfikacja_zdarzenia ?? "-"}`,
+      `Aircraft type: ${r?.typ_statku_powietrznego ?? "-"}`,
+      `Aircraft category: ${r?.kategoria_statku_powietrznego ?? "-"}`,
+      `Registration: ${r?.znaki_rozpoznawcze ?? "-"}`,
+      `Location: ${r?.miejsce_zdarzenia ?? "-"}`,
+      `Investigation closed: ${r?.data_zakonczenia_badania ?? "-"}`,
+    ];
+
+    if (summary) {
+      lines.push("", "── SUMMARY ──", summary);
+    }
+
+    for (const doc of pdfResults) {
+      lines.push("", `── ${doc.label} (${doc.pages} pages) ──`, doc.text);
+    }
 
     return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text", text: lines.join("\n") }],
     };
   }
 );
