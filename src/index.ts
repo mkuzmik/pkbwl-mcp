@@ -202,12 +202,24 @@ server.tool(
   }
 );
 
+async function fetchPdfText(pdfUrl: string): Promise<{ url: string; pages: number; text: string }> {
+  const res = await fetch(pdfUrl, {
+    headers: { ...HEADERS, Accept: "application/pdf,*/*" },
+  });
+  if (!res.ok) throw new Error(`Failed to fetch PDF: ${res.status} ${pdfUrl}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const parser = new PDFParse({ data: buffer });
+  const result = await parser.getText();
+  return { url: pdfUrl, pages: result.total, text: result.text };
+}
+
 // ── Tool: get_report ─────────────────────────────────────────────────────────
 
 server.tool(
   "get_report",
-  "Fetch full details of a specific PKBWL report: metadata, Polish and English summary, " +
-    "and URLs of all available PDF documents (preliminary report, final report, resolution, etc.).",
+  "Fetch full details of a specific PKBWL report: metadata, summary, and the full text " +
+    "of all available PDF documents (preliminary report, final report, resolution, safety recommendations). " +
+    "This is everything you need to analyse a single incident.",
   {
     report_id: z
       .string()
@@ -267,6 +279,18 @@ server.tool(
       (r) => r.nr_pkbwl.replace("/", "-") === slug || r.nr_pkbwl === args.report_id
     );
 
+    // Fetch all PDFs in parallel
+    const pdfResults = await Promise.all(
+      pdfs.map(async ({ label, url: pdfUrl }) => {
+        try {
+          const { pages, text } = await fetchPdfText(pdfUrl);
+          return { label, url: pdfUrl, pages, text };
+        } catch (e) {
+          return { label, url: pdfUrl, pages: 0, text: `[Failed to extract: ${e}]` };
+        }
+      })
+    );
+
     const result = {
       id: apiRecord?.nr_pkbwl ?? args.report_id,
       url,
@@ -279,76 +303,11 @@ server.tool(
       investigation_closed: apiRecord?.data_zakonczenia_badania,
       metadata,
       summary: summary.replace(/\n{3,}/g, "\n\n").trim(),
-      pdf_documents: pdfs,
+      documents: pdfResults,
     };
 
     return {
       content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-    };
-  }
-);
-
-// ── Tool: read_pdf ───────────────────────────────────────────────────────────
-
-server.tool(
-  "read_pdf",
-  "Download a PDF document from a PKBWL report and extract its full text content. " +
-    "Use the PDF URLs returned by get_report. This is how you access the detailed " +
-    "investigation findings, causes, and safety recommendations.",
-  {
-    pdf_url: z
-      .string()
-      .url()
-      .describe(
-        "Full URL of the PDF to read (from the pdf_documents list returned by get_report). " +
-          "E.g. 'https://pkbwl.gov.pl/wp-content/uploads/2023/01/2020_3377_RK.pdf'"
-      ),
-    max_chars: z
-      .number()
-      .int()
-      .min(1000)
-      .max(100000)
-      .default(50000)
-      .describe(
-        "Maximum number of characters to return from the PDF text (default: 50000). " +
-          "Large final reports may be truncated; reduce for a quick overview."
-      ),
-  },
-  async (args) => {
-    const res = await fetch(args.pdf_url, {
-      headers: {
-        ...HEADERS,
-        Accept: "application/pdf,*/*",
-        Referer: `${BASE_URL}/rejestr-zdarzen/`,
-      },
-    });
-    if (!res.ok) throw new Error(`Failed to fetch PDF: ${res.status} ${args.pdf_url}`);
-
-    const buffer = Buffer.from(await res.arrayBuffer());
-    const parser = new PDFParse({ data: buffer });
-    const result = await parser.getText();
-
-    const fullText = result.text;
-    const text = fullText.slice(0, args.max_chars);
-    const truncated = fullText.length > args.max_chars;
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            {
-              url: args.pdf_url,
-              pages: result.total,
-              chars_total: fullText.length,
-              truncated,
-              text,
-            },
-            null,
-            2
-          ),
-        },
-      ],
     };
   }
 );
