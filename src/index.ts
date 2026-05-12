@@ -210,7 +210,19 @@ async function fetchPdfText(pdfUrl: string): Promise<{ url: string; pages: numbe
   const buffer = Buffer.from(await res.arrayBuffer());
   const parser = new PDFParse({ data: buffer });
   const result = await parser.getText();
-  return { url: pdfUrl, pages: result.total, text: result.text };
+  const text = cleanPdfText(result.text);
+  return { url: pdfUrl, pages: result.total, text };
+}
+
+function cleanPdfText(raw: string): string {
+  return raw
+    .replace(/-- \d+ of \d+ --/g, "")   // remove page markers added by pdf-parse
+    .replace(/\t/g, " ")                 // tabs → spaces
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l, i, arr) => l !== "" || arr[i - 1] !== "")  // collapse consecutive blank lines
+    .join("\n")
+    .trim();
 }
 
 // ── Tool: get_report ─────────────────────────────────────────────────────────
@@ -254,13 +266,15 @@ server.tool(
       }
     });
 
-    // Extract summary sections (Polish + English)
+    // Extract summary — grab only the STRESZCZENIE/SUMMARY section
+    // The page structure has the incident summary in a specific div; fall back to all paragraphs
+    const FOOTER_NOISE = /Dodaj zgłoszenie|ECCAIRS|500 233 233|phone 24h|kontakt@pkbwl|Przejdź do treści|Zgłoś zdarzenie/i;
     let summary = "";
-    // Look for content after "STRESZCZENIE" / "SUMMARY" headings
     $("h1, h2, h3, h4, p, .summary, .streszczenie").each((_, el) => {
       const text = $(el).text().trim();
-      if (text) summary += text + "\n\n";
+      if (text && !FOOTER_NOISE.test(text)) summary += text + "\n\n";
     });
+    summary = summary.replace(/\n{3,}/g, "\n\n").trim();
 
     // Extract PDF links
     const pdfs: Array<{ label: string; url: string }> = [];
@@ -302,7 +316,7 @@ server.tool(
       location: apiRecord?.miejsce_zdarzenia,
       investigation_closed: apiRecord?.data_zakonczenia_badania,
       metadata,
-      summary: summary.replace(/\n{3,}/g, "\n\n").trim(),
+      summary,
       documents: pdfResults,
     };
 
